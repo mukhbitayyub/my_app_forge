@@ -1,0 +1,24 @@
+include: package:very_good_analysis/analysis_options.yaml
+
+analyzer:
+  errors:
+    invalid_annotation_target: ignore
+
+linter:
+  rules:
+    prefer_const_constructors: true
+    prefer_const_declarations: true
+    avoid_print: true
+    always_use_package_imports: true
+    sort_pub_dependencies: true
+    # Disable strict line length check of 80 chars, as formatter handles lengths up to 150 chars
+    lines_longer_than_80_chars: false
+    # Disable strict documentation checks for standard member APIs to keep setup clean
+    public_member_api_docs: false
+    # Disable closure parameter types warning for standard widget test template compatibility
+    avoid_types_on_closure_parameters: false
+    # Disable positional order requirements for generated/template layouts
+    always_put_required_named_parameters_first: false
+
+formatter:
+  page_width: 150

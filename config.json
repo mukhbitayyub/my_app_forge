@@ -1,9 +1,0 @@
-{
-  "project_name": "my_app_forge",
-  "package_name": "app_forge",
-  "org_id": "com.appforge",
-  "category": "productivity",
-  "architecture": "bloc",
-  "primary_color": "0xFFF59E0B",
-  "secondary_color": "0xFF10B981"
-}
