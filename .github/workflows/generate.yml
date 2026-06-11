@@ -1,0 +1,249 @@
+name: Generate Flutter App
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        type: string
+        required: true
+      callback_url:
+        type: string
+        required: true
+      template_zip_url:
+        type: string
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.1'
+          cache: true
+
+      - name: Download template zipball
+        run: |
+          curl -L -o template.zip "${{ github.event.inputs.template_zip_url }}"
+          unzip -q template.zip -d _template_clone || true
+          shopt -s dotglob
+          mv _template_clone/*/my_app/* .
+          rm -rf _template_clone template.zip
+
+      - name: Create refactor script
+        run: |
+          cat << 'EOF' > refactor.py
+          import json
+          import os
+          import shutil
+
+          # 1. Load config.json
+          with open('config.json', 'r') as f:
+              config = json.load(f)
+
+          project_name = config.get('project_name')
+          org_id = config.get('org_id')
+          app_display_name = config.get('app_display_name', 'My App')
+          category = config.get('category')
+          primary_color = config.get('primary_color', '#6366F1')
+          secondary_color = config.get('secondary_color', '#F59E0B')
+
+          # Clean up colors
+          primary_hex = primary_color.strip().replace('#', '').replace('0x', '').replace('0X', '').upper()[-6:]
+          secondary_hex = secondary_color.strip().replace('#', '').replace('0x', '').replace('0X', '').upper()[-6:]
+
+          # 2. Prune unused categories in lib/features
+          features_dir = 'lib/features'
+          if os.path.exists(features_dir):
+              for entry in os.listdir(features_dir):
+                  entry_path = os.path.join(features_dir, entry)
+                  if os.path.isdir(entry_path):
+                      if entry not in ['home', category]:
+                          print(f"Pruning unused feature category: {entry}")
+                          shutil.rmtree(entry_path)
+
+          # 3. Define the main page based on category
+          category_page_map = {
+              'productivity': {
+                  'file': 'dashboard_page.dart',
+                  'class': 'DashboardPage',
+                  'dir': 'productivity'
+              },
+              'lifestyle': {
+                  'file': 'home_feed_page.dart',
+                  'class': 'HomeFeedPage',
+                  'dir': 'lifestyle'
+              },
+              'finance': {
+                  'file': 'wallet_page.dart',
+                  'class': 'WalletPage',
+                  'dir': 'finance'
+              },
+              'social': {
+                  'file': 'feed_page.dart',
+                  'class': 'FeedPage',
+                  'dir': 'social'
+              },
+              'education': {
+                  'file': 'course_list_page.dart',
+                  'class': 'CourseListPage',
+                  'dir': 'education'
+              },
+              'ecommerce': {
+                  'file': 'product_grid_page.dart',
+                  'class': 'ProductGridPage',
+                  'dir': 'ecommerce'
+              },
+              'portfolio': {
+                  'file': 'projects_page.dart',
+                  'class': 'ProjectsPage',
+                  'dir': 'portfolio'
+              },
+              'utility': {
+                  'file': 'tool_home_page.dart',
+                  'class': 'ToolHomePage',
+                  'dir': 'utility'
+              }
+          }
+
+          selected_info = category_page_map.get(category)
+          if selected_info:
+              # Overwrite lib/presentation/pages/home_page.dart to redirect to selected category page
+              home_page_path = 'lib/presentation/pages/home_page.dart'
+              if os.path.exists(home_page_path):
+                  import_path = f"package:{project_name}/features/{selected_info['dir']}/presentation/pages/{selected_info['file']}"
+                  home_page_content = f"""import 'package:flutter/material.dart';
+          import '{import_path}';
+
+          class HomePage extends StatelessWidget {{
+            const HomePage({{super.key}});
+
+            @override
+            Widget build(BuildContext context) {{
+              return const {selected_info['class']}();
+            }}
+          }}
+          """
+                  with open(home_page_path, 'w') as hf:
+                      hf.write(home_page_content)
+                  print(f"Updated {home_page_path} to redirect to {selected_info['class']}")
+
+          # 4. Programmatic global search & replace for packages, orgs, etc.
+          def refactor_file(file_path):
+              try:
+                  with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                      content = f.read()
+                  
+                  original_content = content
+                  
+                  # Replace package name imports
+                  content = content.replace('package:my_app/', f'package:{project_name}/')
+                  
+                  # Replace other file specific values
+                  if file_path.endswith('pubspec.yaml'):
+                      content = content.replace('name: my_app', f'name: {project_name}')
+                      content = content.replace("title: 'my_app'", f"title: '{project_name}'")
+                  elif file_path.endswith('app.dart'):
+                      content = content.replace("title: 'my_app'", f"title: '{app_display_name}'")
+                  elif file_path.endswith('AndroidManifest.xml'):
+                      content = content.replace('android:label="my_app"', f'android:label="{app_display_name}"')
+                  elif file_path.endswith('Info.plist'):
+                      content = content.replace('<string>my_app</string>', f'<string>{project_name}</string>')
+                      content = content.replace('<string>My App</string>', f'<string>{app_display_name}</string>')
+                  
+                  # Replace Android com.agency.my_app with org_id
+                  if 'com.agency.my_app' in content:
+                      content = content.replace('com.agency.my_app', org_id)
+                      
+                  # Replace iOS com.agency.myApp with org_id
+                  if 'com.agency.myApp' in content:
+                      content = content.replace('com.agency.myApp', org_id)
+
+                  # Replace app_colors.dart values
+                  if file_path.endswith('app_colors.dart'):
+                      content = content.replace('Color(0xFF6366F1)', f'Color(0xFF{primary_hex})')
+                      content = content.replace('Color(0xFF818CF8)', f'Color(0xFF{primary_hex})')
+                      content = content.replace('Color(0xFFF59E0B)', f'Color(0xFF{secondary_hex})')
+
+                  if content != original_content:
+                      with open(file_path, 'w', encoding='utf-8') as f:
+                          f.write(content)
+              except Exception as e:
+                  print(f"Error refactoring file {file_path}: {e}")
+
+          # Walk through directories and refactor matching files
+          for root, dirs, files in os.walk('.'):
+              # Skip build artifact / binary directories to speed up
+              if any(skip in root for skip in ['.git', '.dart_tool', 'build', '.idea', 'ios/Pods', 'android/.gradle']):
+                  continue
+              for file in files:
+                  file_path = os.path.join(root, file)
+                  refactor_file(file_path)
+
+          # 5. Move Kotlin directory structure to match new org_id
+          orig_kotlin_dir = 'android/app/src/main/kotlin/com/agency/my_app'
+          if os.path.exists(orig_kotlin_dir):
+              new_kotlin_dir = os.path.join('android/app/src/main/kotlin', org_id.replace('.', '/'))
+              os.makedirs(new_kotlin_dir, exist_ok=True)
+              orig_file = os.path.join(orig_kotlin_dir, 'MainActivity.kt')
+              if os.path.exists(orig_file):
+                  shutil.move(orig_file, os.path.join(new_kotlin_dir, 'MainActivity.kt'))
+                  print(f"Moved MainActivity.kt to {new_kotlin_dir}")
+              # Clean up empty old directories if any
+              try:
+                  shutil.rmtree('android/app/src/main/kotlin/com/agency/my_app')
+              except Exception:
+                  pass
+              try:
+                  os.rmdir('android/app/src/main/kotlin/com/agency')
+              except Exception:
+                  pass
+              try:
+                  os.rmdir('android/app/src/main/kotlin/com')
+              except Exception:
+                  pass
+
+          # 6. Rename .iml file if it exists
+          if os.path.exists('my_app.iml'):
+              shutil.move('my_app.iml', f'{project_name}.iml')
+              print(f"Renamed my_app.iml to {project_name}.iml")
+
+          print("Refactoring complete successfully!")
+          EOF
+
+      - name: Execute refactor script
+        run: python3 refactor.py
+
+      - name: Clean up generation scripts
+        run: rm -f refactor.py
+
+      - name: Validate
+        run: |
+          flutter pub get
+          dart run build_runner build --delete-conflicting-outputs
+          flutter analyze || true
+
+      - name: Restructure repo
+        run: |
+          rm -rf config.json
+          rm -f .github/workflows/generate.yml
+
+      - name: Commit generated app
+        run: |
+          git config user.name "AppEngine Bot"
+          git config user.email "bot@yourapp.com"
+          git add .
+          git commit -m "✨ Generated by AppEngine"
+          git push
+
+      - name: Callback
+        if: always()
+        run: |
+          STATUS=${{ job.status == 'success' && 'done' || 'failed' }}
+          curl -X POST "${{ inputs.callback_url }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"job_id\":\"${{ inputs.job_id }}\",\"status\":\"${STATUS}\"}"
